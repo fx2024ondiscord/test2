@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "functions": {
+    "api/generate-task.js": {
+      "runtime": "nodejs20.x"
+    },
+    "api/complete-task.js": {
+      "runtime": "nodejs20.x"
+    },
+    "api/get-status.js": {
+      "runtime": "nodejs20.x"
+    },
+    "api/verify/[id].js": {
+      "runtime": "nodejs20.x"
+    }
+  },
+  "routes": [
+    { "src": "/api/generate-task", "dest": "api/generate-task.js" },
+    { "src": "/api/complete-task", "dest": "api/complete-task.js" },
+    { "src": "/api/get-status", "dest": "api/get-status.js" },
+    { "src": "/verify/(.+)", "dest": "api/verify/[id].js" }
+  ]
+}
