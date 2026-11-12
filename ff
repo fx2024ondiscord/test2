@@ -1,6 +1,7 @@
--- AXION Smart Touch Classic
--- G/H Moss | F Dribble | K Menu | 9 Inspector | 8 Clear
--- B Fast Touch | U Controlled Touch | 5 Juggle | N Finish
+-- AXION MOSS FIX V2
+-- H / G / Shift+H: Moss
+-- F: Dribble | K: Menu | 9: Inspect | 8: Clear
+-- B: Fast Touch | U: Controlled Touch | 5: Juggle | N: Finish
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -15,6 +16,7 @@ local player = Players.LocalPlayer
 assert(player, "Run this on the client")
 
 local env = type(getgenv) == "function" and getgenv() or _G
+
 if type(env.AXION_SMART_TOUCH_CLEANUP) == "function" then
     pcall(env.AXION_SMART_TOUCH_CLEANUP)
 end
@@ -75,6 +77,9 @@ local S = {
     phaseAt = 0,
     message = "Ready",
     pressure = math.huge,
+    mossKeys = {},
+    toggleCount = 0,
+    inputText = "INPUT READY • press H / G, or click MOSS",
     angles = {
         0, 25, -25, 50, -50, 80, -80,
         115, -115, 155, -155, 180,
@@ -236,6 +241,7 @@ function F.pause(reason)
     S.mossMessage, S.errorUntil, S.spawnStable = nil, nil, nil
     S.spawnReady, S.spawnAt = false, os.clock() + 0.6
     S.contact, S.mossRequest = nil, nil
+    S.mossKeys = {}
     S.generation += 1
     S.nextKick = 0
     S.message = reason or "New spawn: automatic modes OFF"
@@ -350,7 +356,8 @@ function F.blocked()
 
     if reason then
         S.spawnStable = nil
-        if S.spawnReady then F.pause(reason) end
+        S.spawnReady = false
+        F.stop(true)
         return reason
     end
 
@@ -417,6 +424,7 @@ end
 function F.syncBalls()
     local folder = World:FindFirstChild("Footballs")
     S.folder = folder
+
     local present = {}
 
     if folder then
@@ -483,8 +491,7 @@ function F.closest(radius, lockBall)
         end
     end
 
-    if lockBall ~= false
-        and S.ball and S.balls[S.ball]
+    if lockBall ~= false and S.ball and S.balls[S.ball]
         and S.ball.Parent == S.folder
         and not S.ball.Anchored then
 
@@ -1442,16 +1449,16 @@ function F.control(now, dt)
     end
 end
 
--- Original Smart Touch layout.
+-- Visible V2 interface.
 
 local COLORS = {
-    BG = Color3.fromRGB(15, 20, 30),
-    Top = Color3.fromRGB(23, 32, 44),
-    Off = Color3.fromRGB(35, 44, 58),
-    On = Color3.fromRGB(24, 107, 89),
-    Text = Color3.fromRGB(239, 246, 248),
-    Dim = Color3.fromRGB(153, 173, 184),
-    Edge = Color3.fromRGB(52, 119, 132),
+    BG = Color3.fromRGB(10, 17, 27),
+    Top = Color3.fromRGB(16, 31, 43),
+    Off = Color3.fromRGB(36, 51, 69),
+    On = Color3.fromRGB(17, 130, 90),
+    Text = Color3.fromRGB(240, 247, 255),
+    Dim = Color3.fromRGB(159, 180, 199),
+    Edge = Color3.fromRGB(58, 214, 171),
 }
 
 function F.new(class, props, parent)
@@ -1469,6 +1476,8 @@ end
 
 function F.toggleMoss()
     local wanted = not C.Moss
+    S.focused = true
+    S.toggleCount += 1
     S.mossRequest = nil
 
     F.character()
@@ -1485,6 +1494,50 @@ function F.toggleMoss()
         or "Moss OFF"
     )
     F.hud()
+end
+
+function F.clickMoss()
+    local box = Input:GetFocusedTextBox()
+    if box then
+        pcall(function() box:ReleaseFocus() end)
+    end
+
+    S.inputText = "MOSS BUTTON CLICKED"
+    S.inputWarningUntil = nil
+    S.focused = true
+    F.toggleMoss()
+end
+
+function F.mossKey(key, isDown)
+    if not S.alive
+        or (key ~= Enum.KeyCode.G and key ~= Enum.KeyCode.H) then
+        return
+    end
+
+    if not isDown then
+        S.mossKeys[key] = nil
+        return
+    end
+
+    if S.mossKeys[key] then return end
+
+    S.mossKeys[key] = true
+    S.focused = true
+
+    if Input:GetFocusedTextBox() then
+        S.inputText = key.Name .. " RECEIVED • chat/text box is focused"
+        S.inputWarningUntil = os.clock() + 3
+        F.hud()
+        return
+    end
+
+    S.inputText = key.Name
+        .. " RECEIVED • toggle #"
+        .. tostring(S.toggleCount + 1)
+
+    S.inputWarningUntil = nil
+    F.toggleMoss()
+    S.mossKeys[key] = true
 end
 
 function F.toggleDribble()
@@ -1597,9 +1650,20 @@ function F.mountUI()
     end
 
     S.uiConnections = {}
+    S.uiReady = false
 
     if S.ui then
         pcall(function() S.ui:Destroy() end)
+    end
+
+    for _, old in ipairs(gui:GetChildren()) do
+        if old:IsA("ScreenGui") and (
+            old.Name == "AXION_SmartTouch"
+            or old.Name == "AXION_Advanced"
+            or old.Name == "AXION_Standalone"
+        ) then
+            old:Destroy()
+        end
     end
 
     local connect = F.uiConnect
@@ -1608,16 +1672,15 @@ function F.mountUI()
     S.ui = F.new("ScreenGui", {
         Name = "AXION_SmartTouch",
         ResetOnSpawn = false,
-        DisplayOrder = 400,
+        DisplayOrder = 900,
         IgnoreGuiInset = false,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     }, gui)
 
     local frame = F.new("Frame", {
         Name = "Window",
-        Size = UDim2.fromOffset(294, S.collapsed and 38 or 415),
-        Position = S.windowPosition
-            or UDim2.new(0.5, -147, 0.40, -125),
+        Size = UDim2.fromOffset(294, S.collapsed and 38 or 510),
+        Position = S.windowPosition or UDim2.new(0, 16, 0.16, 0),
         BackgroundColor3 = COLORS.BG,
         BorderSizePixel = 0,
         Active = true,
@@ -1631,10 +1694,10 @@ function F.mountUI()
         CornerRadius = UDim.new(0, 9),
     }, frame)
 
-    F.new("UIStroke", {
+    S.edge = F.new("UIStroke", {
         Color = COLORS.Edge,
-        Transparency = 0.35,
-        Thickness = 1,
+        Transparency = 0.05,
+        Thickness = 2,
     }, frame)
 
     local header = F.new("Frame", {
@@ -1652,7 +1715,7 @@ function F.mountUI()
         TextSize = 13,
         TextColor3 = COLORS.Text,
         TextXAlignment = Enum.TextXAlignment.Left,
-        Text = "AXION / SMART TOUCH",
+        Text = "AXION • MOSS FIX V2",
     }, header)
 
     local function headerButton(text, x, callback)
@@ -1681,16 +1744,47 @@ function F.mountUI()
 
     headerButton("−", 229, function()
         S.collapsed = not S.collapsed
-        frame.Size = UDim2.fromOffset(294, S.collapsed and 38 or 415)
+        frame.Size = UDim2.fromOffset(294, S.collapsed and 38 or 510)
         S.body.Visible = not S.collapsed
     end)
 
     headerButton("×", 259, F.toggleUi)
 
+    S.mossHero = F.new("TextButton", {
+        Name = "MossPrimary",
+        Position = UDim2.fromOffset(10, 43),
+        Size = UDim2.fromOffset(274, 52),
+        BackgroundColor3 = COLORS.Off,
+        BorderSizePixel = 0,
+        Text = "MOSS OFF • H / G\nClick here to enable",
+        TextColor3 = COLORS.Text,
+        Font = Enum.Font.GothamBold,
+        TextSize = 12,
+        TextWrapped = true,
+    }, frame)
+
+    F.new("UICorner", {
+        CornerRadius = UDim.new(0, 8),
+    }, S.mossHero)
+
+    connect(S.mossHero.Activated, F.clickMoss)
+
+    S.inputLabel = F.new("TextLabel", {
+        Name = "InputFeedback",
+        Position = UDim2.fromOffset(10, 99),
+        Size = UDim2.fromOffset(274, 18),
+        BackgroundTransparency = 1,
+        Text = S.inputText,
+        Font = Enum.Font.Gotham,
+        TextSize = 10,
+        TextColor3 = COLORS.Edge,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    }, frame)
+
     local body = F.new("ScrollingFrame", {
         Name = "Body",
-        Position = UDim2.fromOffset(0, 39),
-        Size = UDim2.new(1, 0, 1, -39),
+        Position = UDim2.fromOffset(0, 124),
+        Size = UDim2.new(1, 0, 1, -126),
         BorderSizePixel = 0,
         BackgroundTransparency = 1,
         ScrollBarThickness = 3,
@@ -1905,7 +1999,7 @@ function F.mountUI()
     slider("MossRange", "BODY SPHERE RADIUS", 145, 2, 18, 0.5)
     slider("MossHeight", "SHOT HEIGHT", 196, 0, 7.5, 0.5)
 
-    button("Moss", "MOSS [G] OFF", 10, 250, 132, F.toggleMoss)
+    button("Moss", "MOSS [G/H] OFF", 10, 250, 132, F.clickMoss)
 
     button("Style", "MOSS LOW", 151, 250, 132, function()
         C.Style = C.Style == "LOW" and "SMART"
@@ -2075,11 +2169,14 @@ function F.mountUI()
         S.windowPosition = frame.Position
     end)
 
+    S.uiReady = true
     F.hud()
 end
 
 function F.hud()
-    if not S.alive or not S.ui or not S.ui.Parent then return end
+    if not S.alive or not S.uiReady or not S.ui or not S.ui.Parent then
+        return
+    end
 
     local function toggle(name, text, value)
         local button = S.buttons[name]
@@ -2093,7 +2190,7 @@ function F.hud()
     toggle("Preview", "PREVIEW", C.Preview)
     toggle("Ring", "MOSS SPHERE", C.Ring)
     toggle("Shield", "BODY SHIELD", C.Shield)
-    toggle("Moss", "MOSS [G]", C.Moss)
+    toggle("Moss", "MOSS [G/H]", C.Moss)
     toggle("AutoTouch", "AUTO TOUCH", C.AutoTouch)
     toggle("Boost", "B 120 ms", C.Mode == "QUICK")
     toggle("Ultra", "U 300 ms", C.Mode == "PRECISE")
@@ -2105,6 +2202,7 @@ function F.hud()
 
     S.buttons.Style.Text = "MOSS " .. C.Style
     S.buttons.Trick.Text = "TRICK " .. C.Trick
+
     S.buttons.Finish.BackgroundColor3 =
         S.finish and COLORS.On or COLORS.Off
 
@@ -2115,9 +2213,7 @@ function F.hud()
         S.rebind and "PRESS A KEY..."
         or "KEY: " .. C.DribbleKey.Name
 
-    S.reachLabel.Text = string.format(
-        "REACH %.1f (- / =)", C.ReachSize
-    )
+    S.reachLabel.Text = string.format("REACH %.1f (- / =)", C.ReachSize)
 
     for _, render in pairs(S.labels) do render() end
 
@@ -2133,13 +2229,35 @@ function F.hud()
         C.Mode .. string.format(" • %.0f ms estimate", S.ping * 2000)
         .. " • " .. (C.Walk and "AUTO WALK" or "MANUAL WALK")
 
-    S.statusLabel.Text =
+    local reason =
         (
             S.errorUntil and os.clock() < S.errorUntil
             and S.errorMessage
         )
         or (C.Moss and S.mossMessage)
         or S.message
+
+    S.statusLabel.Text = reason
+
+    S.mossHero.Text =
+        (C.Moss and "MOSS ON • H / G" or "MOSS OFF • H / G")
+        .. "\n"
+        .. (
+            C.Moss and reason
+            or "Click here or press H / G to enable"
+        )
+
+    S.mossHero.BackgroundColor3 =
+        C.Moss and COLORS.On or COLORS.Off
+
+    S.inputLabel.Text = S.inputText
+    S.inputLabel.TextColor3 =
+        (
+            S.inputWarningUntil
+            and os.clock() < S.inputWarningUntil
+        )
+        and Color3.fromRGB(255, 190, 90)
+        or COLORS.Edge
 
     local part = S.inspectedPart
 
@@ -2248,15 +2366,24 @@ function F.updateRing()
 end
 
 F.connect(Input.InputBegan, function(input, processed)
-    if not S.alive or Input:GetFocusedTextBox() then return end
+    if not S.alive then return end
 
     local key = input.KeyCode
+    S.focused = true
 
     if input.UserInputType == Enum.UserInputType.Keyboard
         and (key == Enum.KeyCode.G or key == Enum.KeyCode.H) then
-        F.toggleMoss()
+        F.mossKey(key, true)
         return
     end
+
+    if key == Enum.KeyCode.LeftShift
+        or key == Enum.KeyCode.RightShift then
+        S.inputText = "SHIFT RECEIVED • press H / G for Moss"
+        F.hud()
+    end
+
+    if Input:GetFocusedTextBox() then return end
 
     if input.UserInputType == Enum.UserInputType.MouseButton1
         and S.inspect then
@@ -2370,6 +2497,8 @@ F.connect(Input.InputBegan, function(input, processed)
 end)
 
 F.connect(Input.InputEnded, function(input)
+    F.mossKey(input.KeyCode, false)
+
     if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.KeyCode == Enum.KeyCode.ButtonR2 then
         S.manualDown = false
@@ -2401,6 +2530,7 @@ end)
 F.connect(Input.WindowFocusReleased, function()
     S.focused = false
     S.manualDown = false
+    S.mossKeys = {}
     F.stop(true)
 end)
 
@@ -2468,9 +2598,11 @@ F.connect(Run.Heartbeat, function(dt)
         S.sphere.Adornee = S.root
         S.sphere.Radius = C.MossRange
         S.sphere.Visible = C.Ring and S.root ~= nil
+
         S.sphere.Color3 = C.Moss
             and Color3.fromRGB(70, 245, 150)
             or Color3.fromRGB(255, 166, 80)
+
         S.sphere.Transparency = C.Moss and 0.90 or 0.96
 
         F.updateRing()
@@ -2552,6 +2684,12 @@ function F.cleanup()
         part:Destroy()
     end
 
+    if S.contextActions then
+        pcall(function()
+            S.contextActions:UnbindAction("AXION_MossFixV2")
+        end)
+    end
+
     F.save()
 
     if env.AXION_SMART_TOUCH_CLEANUP == F.cleanup then
@@ -2572,3 +2710,34 @@ F.syncBalls()
 F.world()
 F.mountUI()
 F.hud()
+
+-- Both input routes share one physical-key latch.
+pcall(function()
+    local actions = game:GetService("ContextActionService")
+
+    actions:UnbindAction("AXION_MossFixV2")
+
+    actions:BindActionAtPriority(
+        "AXION_MossFixV2",
+        function(_, inputState, input)
+            if not S.alive or not input then
+                return Enum.ContextActionResult.Pass
+            end
+
+            if inputState == Enum.UserInputState.Begin then
+                F.mossKey(input.KeyCode, true)
+            elseif inputState == Enum.UserInputState.End
+                or inputState == Enum.UserInputState.Cancel then
+                F.mossKey(input.KeyCode, false)
+            end
+
+            return Enum.ContextActionResult.Pass
+        end,
+        false,
+        Enum.ContextActionPriority.High.Value + 1,
+        Enum.KeyCode.G,
+        Enum.KeyCode.H
+    )
+
+    S.contextActions = actions
+end)
