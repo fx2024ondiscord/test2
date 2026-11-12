@@ -1,6 +1,6 @@
 -- AXION Smart Touch Classic
--- F dribble / H Moss / K menu / 9 inspect / 8 clear
--- B fast touch / U controlled touch / 5 juggle / N finish
+-- G/H Moss | F Dribble | K Menu | 9 Inspector | 8 Clear
+-- B Fast Touch | U Controlled Touch | 5 Juggle | N Finish
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -22,6 +22,7 @@ end
 local C = {
     Dribble = false,
     Moss = false,
+    AutoTouch = false,
     Walk = false,
     Avoid = true,
     Reach = true,
@@ -30,7 +31,6 @@ local C = {
     Preview = true,
     MossRange = 6.5,
     MossHeight = 0,
-    NetRange = 80,
     Trick = "SMART",
     Juggle = false,
     Air = false,
@@ -131,7 +131,8 @@ pcall(function()
 
     if type(data.DribbleKey) == "string" then
         local reserved = {
-            H = true, K = true, B = true, U = true, N = true,
+            G = true, H = true, K = true,
+            B = true, U = true, N = true,
             Five = true, Nine = true, Eight = true,
             Unknown = true, Escape = true,
             W = true, A = true, S = true, D = true,
@@ -225,6 +226,7 @@ function F.pause(reason)
     C.Dribble, C.Moss, C.Juggle, C.Mode =
         false, false, false, "SMART"
 
+    C.AutoTouch = false
     F.reset()
 
     S.manualDown, S.manualUntil, S.touchAt = false, 0, -100
@@ -233,6 +235,7 @@ function F.pause(reason)
 
     S.mossMessage, S.errorUntil, S.spawnStable = nil, nil, nil
     S.spawnReady, S.spawnAt = false, os.clock() + 0.6
+    S.contact, S.mossRequest = nil, nil
     S.generation += 1
     S.nextKick = 0
     S.message = reason or "New spawn: automatic modes OFF"
@@ -387,8 +390,7 @@ function F.manualMove()
         end
     end
 
-    return Input.TouchEnabled
-        and os.clock() - S.touchAt < 0.3
+    return Input.TouchEnabled and os.clock() - S.touchAt < 0.3
 end
 
 function F.message(text)
@@ -415,7 +417,6 @@ end
 function F.syncBalls()
     local folder = World:FindFirstChild("Footballs")
     S.folder = folder
-
     local present = {}
 
     if folder then
@@ -436,19 +437,13 @@ function F.syncBalls()
             S.balls[ball] = nil
         else
             local size = C.Reach
-                and Vector3.new(
-                    C.ReachSize, C.ReachSize, C.ReachSize
-                )
+                and Vector3.new(C.ReachSize, C.ReachSize, C.ReachSize)
                 or record.size
 
-            if ball.Size ~= size then
-                ball.Size = size
-            end
+            if ball.Size ~= size then ball.Size = size end
 
-            local protect = C.Reach
-                and C.Shield
-                and S.root
-                and S.character
+            local protect = C.Reach and C.Shield
+                and S.root and S.character
                 and (ball.Position - S.root.Position).Magnitude < 36
 
             if not protect then
@@ -472,7 +467,7 @@ function F.syncBalls()
     end
 end
 
-function F.closest(radius)
+function F.closest(radius, lockBall)
     if not S.root then return nil, math.huge end
 
     local best, distance = nil, radius
@@ -488,7 +483,8 @@ function F.closest(radius)
         end
     end
 
-    if S.ball and S.balls[S.ball]
+    if lockBall ~= false
+        and S.ball and S.balls[S.ball]
         and S.ball.Parent == S.folder
         and not S.ball.Anchored then
 
@@ -539,20 +535,16 @@ function F.bounds(field)
             local size = part.Size * 0.5
             local pos = part.Position
 
-            local x =
-                math.abs(cf.RightVector.X) * size.X
+            local x = math.abs(cf.RightVector.X) * size.X
                 + math.abs(cf.UpVector.X) * size.Y
                 + math.abs(cf.LookVector.X) * size.Z
 
-            local z =
-                math.abs(cf.RightVector.Z) * size.X
+            local z = math.abs(cf.RightVector.Z) * size.X
                 + math.abs(cf.UpVector.Z) * size.Y
                 + math.abs(cf.LookVector.Z) * size.Z
 
-            loX, hiX = math.min(loX, pos.X - x),
-                math.max(hiX, pos.X + x)
-            loZ, hiZ = math.min(loZ, pos.Z - z),
-                math.max(hiZ, pos.Z + z)
+            loX, hiX = math.min(loX, pos.X - x), math.max(hiX, pos.X + x)
+            loZ, hiZ = math.min(loZ, pos.Z - z), math.max(hiZ, pos.Z + z)
         end
     end
 
@@ -600,13 +592,10 @@ function F.world()
                 center = point.Position
             end
 
-            local d = F.flat(
-                center - S.root.Position
-            ).Magnitude - (field == S.field and 7 or 0)
+            local d = F.flat(center - S.root.Position).Magnitude
+                - (field == S.field and 7 or 0)
 
-            if d < score then
-                best, score = field, d
-            end
+            if d < score then best, score = field, d end
         end
     end
 
@@ -619,42 +608,30 @@ function F.world()
         return
     end
 
-    if best ~= S.field or not S.bounds then
-        F.bounds(best)
-    end
-
+    if best ~= S.field or not S.bounds then F.bounds(best) end
     S.field = best
 
     local home, away = F.goals(best)
     local team = player.Team and player.Team.Name
 
-    if S.selectedGoal and S.selectedGoal.Parent
-        and (
-            S.selectedGoal == home
-            or S.selectedGoal == away
-        ) then
-        S.goal = S.selectedGoal
-    elseif team == "Home" then
+    if team == "Home" then
         S.goal = away
     elseif team == "Away" then
         S.goal = home
+    elseif S.selectedGoal and S.selectedGoal.Parent
+        and (S.selectedGoal == home or S.selectedGoal == away) then
+        S.goal = S.selectedGoal
     elseif not home or not away then
         S.goal = home or away
     else
-        local homeDirection =
-            F.flat(home.Position - S.root.Position)
-        local awayDirection =
-            F.flat(away.Position - S.root.Position)
+        local h = F.flat(home.Position - S.root.Position)
+        local a = F.flat(away.Position - S.root.Position)
 
-        if math.min(
-            homeDirection.Magnitude, awayDirection.Magnitude
-        ) < 40 then
-            S.goal = homeDirection.Magnitude < awayDirection.Magnitude
-                and home or away
+        if math.min(h.Magnitude, a.Magnitude) < 40 then
+            S.goal = h.Magnitude < a.Magnitude and home or away
         else
-            S.goal =
-                F.unit(homeDirection):Dot(S.root.CFrame.LookVector)
-                > F.unit(awayDirection):Dot(S.root.CFrame.LookVector)
+            S.goal = F.unit(h):Dot(S.root.CFrame.LookVector)
+                > F.unit(a):Dot(S.root.CFrame.LookVector)
                 and home or away
         end
     end
@@ -677,10 +654,8 @@ function F.enemies(now)
             and team ~= "Picking"
             and other.Character then
 
-            local root = other.Character:
-                FindFirstChild("HumanoidRootPart")
-            local humanoid = other.Character:
-                FindFirstChildOfClass("Humanoid")
+            local root = other.Character:FindFirstChild("HumanoidRootPart")
+            local humanoid = other.Character:FindFirstChildOfClass("Humanoid")
 
             if root and humanoid and humanoid.Health > 0
                 and (root.Position - S.root.Position).Magnitude < 60 then
@@ -688,8 +663,8 @@ function F.enemies(now)
                 local velocity = F.limit(
                     F.flat(root.AssemblyLinearVelocity), 80
                 )
-                local previous = S.history[other]
 
+                local previous = S.history[other]
                 local acceleration = previous and F.limit(
                     (velocity - previous.velocity)
                         / math.max(now - previous.at, 0.03),
@@ -720,8 +695,7 @@ function F.latency()
     if not ok or type(value) ~= "number" then
         ok, value = pcall(function()
             return game:GetService("Stats")
-                .Network.ServerStatsItem["Data Ping"]:GetValue()
-                / 2000
+                .Network.ServerStatsItem["Data Ping"]:GetValue() / 2000
         end)
     end
 
@@ -748,9 +722,7 @@ function F.pressure(point)
             ) - point
         ).Magnitude
 
-        if d < distance then
-            distance, threat = d, enemy
-        end
+        if d < distance then distance, threat = d, enemy end
     end
 
     return distance, threat
@@ -762,17 +734,14 @@ function F.intent(manual)
     end
 
     if S.goal and S.goal.Parent then
-        return F.unit(F.flat(
-            S.goal.Position - S.root.Position
-        ))
+        return F.unit(F.flat(S.goal.Position - S.root.Position))
     end
 
     return F.unit(F.flat(S.root.CFrame.LookVector))
 end
 
 function F.plan(ball, forward, now)
-    if now < S.nextPlan and S.lane
-        and S.planBall == ball
+    if now < S.nextPlan and S.lane and S.planBall == ball
         and S.planForward:Dot(forward) > 0.9 then
         return S.lane
     end
@@ -789,15 +758,12 @@ function F.plan(ball, forward, now)
     end
 
     local side = Vector3.new(-forward.Z, 0, forward.X)
-    local best, bestScore, bestAngle =
-        forward, -math.huge, 0
-
+    local best, bestScore, bestAngle = forward, -math.huge, 0
     local lead = math.clamp(S.ping + 0.06, 0.06, 0.32)
 
     for _, degrees in ipairs(S.angles) do
         local angle = math.rad(degrees)
-        local direction =
-            forward * math.cos(angle)
+        local direction = forward * math.cos(angle)
             + side * math.sin(angle)
 
         local score = direction:Dot(forward) * 2.4
@@ -820,25 +786,18 @@ function F.plan(ball, forward, now)
 
         for i = 1, 3 do
             local time = lead + i * 0.10
-            local point =
-                ball.Position + direction * (1.0 + i * 1.1)
+            local point = ball.Position + direction * (1 + i * 1.1)
 
-            score -= F.flat(
-                point - F.bound(point)
-            ).Magnitude * 3.5
+            score -= F.flat(point - F.bound(point)).Magnitude * 3.5
 
             for _, enemy in ipairs(S.enemies) do
-                local d = F.flat(
-                    F.enemyAt(enemy, time) - point
-                ).Magnitude
-
+                local d = F.flat(F.enemyAt(enemy, time) - point).Magnitude
                 score -= math.max(0, 6 - d)^2 * 0.14
             end
         end
 
         if score > bestScore then
-            best, bestScore, bestAngle =
-                direction, score, degrees
+            best, bestScore, bestAngle = direction, score, degrees
         end
     end
 
@@ -847,7 +806,6 @@ function F.plan(ball, forward, now)
         and "DRAG BACK"
         or (pressure < 8 and "SHIELD / CUT" or "CARRY")
 
-    S.threat = threat
     return S.lane
 end
 
@@ -859,14 +817,13 @@ function F.intercept(ball)
 
     for i = 1, 8 do
         local time = i * 0.10
+
         target = F.bound(
-            origin
-                + velocity * math.min(time + S.ping, 0.65)
+            origin + velocity * math.min(time + S.ping, 0.65)
         )
 
-        if F.flat(
-            target - S.root.Position
-        ).Magnitude <= speed * time + 2 then
+        if F.flat(target - S.root.Position).Magnitude
+            <= speed * time + 2 then
             break
         end
     end
@@ -898,22 +855,15 @@ end
 function F.send(ball, action, power, target, lift)
     local now = os.clock()
 
-    if now < S.nextKick then
-        return false, "waiting for next touch"
-    end
-
+    if now < S.nextKick then return false, "waiting for next touch" end
     if S.manualDown or now < S.manualUntil then
         return false, "manual charge has priority"
     end
-
-    if S.pending then
-        return false, "waiting for previous request"
-    end
+    if S.pending then return false, "waiting for previous request" end
 
     if not (
         ball and ball.Parent == S.folder
-        and not ball.Anchored
-        and S.root and target
+        and not ball.Anchored and S.root and target
     ) then
         return false, "ball unavailable"
     end
@@ -925,21 +875,20 @@ function F.send(ball, action, power, target, lift)
         return false, "Touch.Kick remote unavailable"
     end
 
-    local flat = F.flat(target - S.root.Position)
-
-    if flat.Magnitude < 0.05 then
+    local direction = F.flat(target - S.root.Position)
+    if direction.Magnitude < 0.05 then
         return false, "no valid aim"
     end
 
     local rise = lift and math.clamp(
         target.Y - S.root.Position.Y,
-        -flat.Magnitude * 0.06,
-        math.min(7.5, flat.Magnitude * 0.38)
+        -direction.Magnitude * 0.06,
+        math.min(7.5, direction.Magnitude * 0.38)
     ) or 0
 
     local aim = CFrame.lookAt(
         S.root.Position,
-        S.root.Position + flat + Vector3.new(0, rise, 0)
+        S.root.Position + direction + Vector3.new(0, rise, 0)
     )
 
     local payload = {
@@ -948,9 +897,7 @@ function F.send(ball, action, power, target, lift)
         math.clamp(power, 0, 1),
         {Ground = not lift, Right = false, Left = false},
         aim,
-        S.root.CFrame:VectorToObjectSpace(
-            S.humanoid.MoveDirection
-        ),
+        S.root.CFrame:VectorToObjectSpace(S.humanoid.MoveDirection),
     }
 
     local ok = true
@@ -968,8 +915,7 @@ function F.send(ball, action, power, target, lift)
                 remote:InvokeServer(payload)
             end)
 
-            if not S.alive
-                or S.generation ~= generation
+            if not S.alive or S.generation ~= generation
                 or S.pending ~= ticket then
                 return
             end
@@ -979,9 +925,7 @@ function F.send(ball, action, power, target, lift)
             if not success then
                 S.errorUntil = os.clock() + 2
                 S.errorMessage = "RemoteFunction request failed"
-                S.nextKick = math.max(
-                    S.nextKick, os.clock() + 0.35
-                )
+                S.nextKick = math.max(S.nextKick, os.clock() + 0.35)
             end
         end)
     end
@@ -996,8 +940,7 @@ function F.send(ball, action, power, target, lift)
 
     if action == "Shoot" then gap = 0.12 end
 
-    S.nextKick = now
-        + gap
+    S.nextKick = now + gap
         + math.min(S.ping * 0.25, 0.08)
         + math.min(S.stalls * 0.04, 0.20)
 
@@ -1033,16 +976,12 @@ function F.observe(now)
 end
 
 function F.shotTarget(ball)
-    if not (S.goal and S.goal.Parent) then return nil end
+    if not (S.goal and S.goal.Parent and S.root) then return nil end
 
-    local forward = F.unit(F.flat(
-        S.goal.Position - S.root.Position
-    ))
-
+    local forward = F.unit(F.flat(S.goal.Position - S.root.Position))
     if forward.Magnitude < 0.01 then return nil end
 
     local side = Vector3.new(-forward.Z, 0, forward.X)
-
     local width =
         math.abs(side:Dot(S.goal.CFrame.RightVector))
             * S.goal.Size.X * 0.5
@@ -1050,20 +989,37 @@ function F.shotTarget(ball)
             * S.goal.Size.Z * 0.5
 
     local offset = math.clamp(width * 0.55, 0.3, 3.8)
+    local origin = ball and ball.Position or S.root.Position
     local best, bestScore = nil, -math.huge
 
     for _, sign in ipairs({-1, 0, 1}) do
         local point = S.goal.Position + side * offset * sign
-        local score = -math.abs(sign) * 0.1
+        local segment = F.flat(point - origin)
+        local lengthSquared = segment:Dot(segment)
+        local clearance, keeper = 12, 15
 
         for _, enemy in ipairs(S.enemies) do
-            score += math.min(
-                F.flat(
-                    F.enemyAt(enemy, S.ping + 0.15) - point
-                ).Magnitude,
-                20
+            local future = F.enemyAt(
+                enemy, math.clamp(S.ping + 0.15, 0.1, 0.4)
+            )
+
+            local ratio = lengthSquared > 0.01 and math.clamp(
+                F.flat(future - origin):Dot(segment) / lengthSquared,
+                0, 1
+            ) or 0
+
+            clearance = math.min(
+                clearance,
+                F.flat(future - (origin + segment * ratio)).Magnitude
+            )
+
+            keeper = math.min(
+                keeper, F.flat(future - point).Magnitude
             )
         end
+
+        local score = clearance * 2 + keeper * 0.25
+            - math.abs(sign) * 0.08
 
         if score > bestScore then
             best, bestScore = point, score
@@ -1073,48 +1029,34 @@ function F.shotTarget(ball)
     best += forward * 2
 
     local height = C.MossHeight
-
     if C.Style == "SMART" then
-        height = F.pressure(
-            ball and ball.Position or S.root.Position
-        ) < 6 and 1 or 0
+        height = F.pressure(origin) < 6 and 1 or 0
     end
 
-    return Vector3.new(
-        best.X, S.root.Position.Y + height, best.Z
-    )
+    return Vector3.new(best.X, S.root.Position.Y + height, best.Z)
 end
 
 function F.moss(now)
-    if not C.Moss then return false end
+    if not C.Moss then
+        S.mossRequest = nil
+        return false
+    end
 
     local reason = F.blocked()
-
     if reason then
         F.message("Moss ON: " .. reason)
         return false
     end
 
     if not (S.goal and S.goal.Parent) then
-        F.message("Moss ON: no goal • 9 select / 8 clear")
+        F.message("Moss ON: no opponent net • 9 pick field / 8 clear")
         return false
     end
 
-    local distance = F.flat(
-        S.goal.Position - S.root.Position
-    ).Magnitude
-
-    if distance > C.NetRange then
-        F.message(string.format(
-            "Moss ON: goal %.0f studs away • get within %.0f",
-            distance, C.NetRange
-        ))
-        return false
-    end
-
-    local ball = F.closest(C.MossRange)
+    local ball = F.closest(C.MossRange, false)
 
     if not ball then
+        S.mossRequest = nil
         F.message(string.format(
             "Moss ON: waiting for ball within %.1f studs",
             C.MossRange
@@ -1125,17 +1067,19 @@ function F.moss(now)
     F.stop()
     S.finish, S.phase, S.phaseBall = nil, "IDLE", nil
 
-    local toward = F.unit(F.flat(
-        S.goal.Position - ball.Position
-    ))
+    local toward = F.unit(F.flat(S.goal.Position - ball.Position))
+    local speed = F.flat(ball.AssemblyLinearVelocity):Dot(toward)
 
-    if (
-        S.shotBall == ball
-        and now - (S.shotAt or -100) < 0.45
-    ) or F.flat(
-        ball.AssemblyLinearVelocity
-    ):Dot(toward) > 22 then
-        F.message("Moss: ball already traveling toward goal")
+    if speed > 22 then
+        F.message("Moss: ball traveling toward opponent net")
+        return true
+    end
+
+    local pending = S.mossRequest
+
+    if pending and pending.ball == ball
+        and now - pending.at < 0.14 + math.min(S.ping, 0.12) then
+        F.message("Moss: shot requested • waiting for ball response")
         return true
     end
 
@@ -1146,14 +1090,103 @@ function F.moss(now)
         target and target.Y - S.root.Position.Y > 0.05
     )
 
-    if ok then S.shotBall, S.shotAt = ball, now end
+    if ok then
+        S.mossRequest = {ball = ball, at = now}
+    end
 
     F.message(
-        ok and "Moss: 100% shot requested"
+        ok and ("Moss: full-power shot toward " .. S.goal.Name)
         or ("Moss ON: " .. message)
     )
 
     return true
+end
+
+function F.autoTouch(now)
+    if not C.AutoTouch or not C.Reach or F.blocked() then
+        S.contact = nil
+        return
+    end
+
+    local ball, distance = F.closest(C.ReachSize + 0.75, false)
+    local contact = S.contact
+
+    if contact and contact.ball and contact.ball.Parent == S.folder then
+        local oldDistance = (
+            contact.ball.Position - S.root.Position
+            + Vector3.new(0, 0.25, 0)
+        ).Magnitude
+
+        if oldDistance <= C.ReachSize + 0.75 then
+            ball, distance = contact.ball, oldDistance
+        end
+    end
+
+    if not ball then
+        S.contact = nil
+        return
+    end
+
+    if not contact or contact.ball ~= ball then
+        contact = {
+            ball = ball,
+            inside = false,
+            pending = false,
+        }
+        S.contact = contact
+    end
+
+    if distance > C.ReachSize + 0.75 then
+        S.contact = nil
+        return
+    end
+
+    local higher = C.Moss or C.Dribble or S.finish
+        or C.Mode ~= "SMART"
+
+    if higher or S.manualDown or now < S.manualUntil then
+        contact.inside = distance <= C.ReachSize
+        contact.pending = false
+        return
+    end
+
+    if distance <= C.ReachSize and not contact.inside then
+        contact.inside = true
+        contact.pending = true
+        contact.entered = now
+    end
+
+    if not contact.pending then return end
+
+    if distance > C.ReachSize or now - contact.entered > 0.3 then
+        contact.pending = false
+        return
+    end
+
+    if now - (S.lastContactTap or -100) < 0.35 then return end
+
+    local direction = F.manualMove()
+        and F.unit(F.flat(S.humanoid.MoveDirection))
+        or F.unit(F.flat(S.root.CFrame.LookVector))
+
+    if direction.Magnitude < 0.01 then
+        direction = F.unit(F.flat(S.root.CFrame.LookVector))
+    end
+
+    if direction.Magnitude < 0.01 then return end
+
+    if F.flat(ball.AssemblyLinearVelocity):Dot(direction) > 9 then
+        contact.pending = false
+        return
+    end
+
+    local target = F.bound(ball.Position + direction * 1.7)
+
+    if F.send(ball, "Dribble", 0.09, target, false) then
+        contact.pending = false
+        S.lastContactTap = now
+        F.message("Auto Touch: one controlled contact tap")
+    end
 end
 
 function F.combo(ball, direction, now, reach)
@@ -1165,13 +1198,10 @@ function F.combo(ball, direction, now, reach)
     local vy = ball.AssemblyLinearVelocity.Y
 
     if S.phase == "LIFT" then
-        if ball.Position.Y > S.startY + 0.45 then
-            S.rose = true
-        end
+        if ball.Position.Y > S.startY + 0.45 then S.rose = true end
 
         if now - S.phaseAt > 1.2 + S.ping then
-            S.phase, S.phaseBall, S.lastTrick =
-                "IDLE", nil, now
+            S.phase, S.phaseBall, S.lastTrick = "IDLE", nil, now
             return false
         end
 
@@ -1179,40 +1209,28 @@ function F.combo(ball, direction, now, reach)
             and now - S.phaseAt > 0.16
             and height < 3.6 then
 
-            local target = F.bound(
-                ball.Position + direction * 2.4
-            )
+            local target = F.bound(ball.Position + direction * 2.4)
 
-            if F.send(
-                ball, "Dribble", 0.10, target, false
-            ) then
-                S.phase, S.phaseAt, S.lastTrick =
-                    "RECOVER", now, now
+            if F.send(ball, "Dribble", 0.10, target, false) then
+                S.phase, S.phaseAt, S.lastTrick = "RECOVER", now, now
             end
         end
 
         return true
     elseif S.phase == "RECOVER" then
-        if now - S.phaseAt < 0.22 + S.ping then
-            return true
-        end
-
+        if now - S.phaseAt < 0.22 + S.ping then return true end
         S.phase, S.phaseBall = "IDLE", nil
     end
 
-    local wantsPop = C.Juggle
-        or C.Trick == "ALWAYS"
-        or (C.Trick == "SMART" and S.pressure < 4.0)
+    local wantsPop = C.Juggle or C.Trick == "ALWAYS"
+        or (C.Trick == "SMART" and S.pressure < 4)
 
-    if wantsPop
-        and now - S.lastTrick > 0.8 + S.ping
-        and math.abs(vy) < 8
-        and height < 1.2 then
+    if wantsPop and now - S.lastTrick > 0.8 + S.ping
+        and math.abs(vy) < 8 and height < 1.2 then
 
-        local lift = C.Juggle and 3.4 or 2.0
-        local target = F.bound(
-            ball.Position + direction * 2.4
-        ) + Vector3.new(0, lift + 2.2, 0)
+        local lift = C.Juggle and 3.4 or 2
+        local target = F.bound(ball.Position + direction * 2.4)
+            + Vector3.new(0, lift + 2.2, 0)
 
         if F.send(
             ball, "Dribble",
@@ -1234,9 +1252,7 @@ function F.combo(ball, direction, now, reach)
         end
     end
 
-    if C.Air and height > 0.5
-        and height < 3.6 and vy < -1 then
-
+    if C.Air and height > 0.5 and height < 3.6 and vy < -1 then
         if F.send(
             ball, "Dribble", 0.10,
             F.bound(ball.Position + direction * 2),
@@ -1254,17 +1270,14 @@ function F.finish(now)
     local finish = S.finish
     if not finish then return false end
 
-    if not finish.ball.Parent
-        or finish.ball.Parent ~= S.folder
+    if not finish.ball.Parent or finish.ball.Parent ~= S.folder
         or now - finish.at > 1.7 + S.ping then
         S.finish = nil
         return false
     end
 
     local ball = finish.ball
-    local distance = (
-        ball.Position - S.root.Position
-    ).Magnitude
+    local distance = (ball.Position - S.root.Position).Magnitude
 
     if distance > (C.Reach and C.ReachSize or 3.5) then
         F.message("Finish: waiting for ball to return")
@@ -1273,14 +1286,10 @@ function F.finish(now)
 
     if finish.phase == "START" then
         local direction = F.intent(false)
-        local target =
-            ball.Position
-            + direction * 2.5
+        local target = ball.Position + direction * 2.5
             + Vector3.new(0, 5.2, 0)
 
-        if F.send(
-            ball, "Dribble", 0.20, target, true
-        ) then
+        if F.send(ball, "Dribble", 0.20, target, true) then
             finish.phase = "LIFT"
             finish.startY = ball.Position.Y
             finish.liftAt = now
@@ -1290,8 +1299,7 @@ function F.finish(now)
             finish.rose = true
         end
 
-        if finish.rose
-            and ball.AssemblyLinearVelocity.Y <= 1
+        if finish.rose and ball.AssemblyLinearVelocity.Y <= 1
             and now - finish.liftAt > 0.18 then
 
             local target = F.shotTarget(ball)
@@ -1310,14 +1318,12 @@ function F.finish(now)
 end
 
 function F.control(now, dt)
-    if not C.Dribble and not S.finish
-        and C.Mode == "SMART" then
+    if not C.Dribble and not S.finish and C.Mode == "SMART" then
         F.stop()
         return
     end
 
     local reason = F.blocked()
-
     if reason then
         F.stop()
         F.message(reason)
@@ -1330,10 +1336,7 @@ function F.control(now, dt)
         return
     end
 
-    if F.finish(now) then
-        F.stop()
-        return
-    end
+    if F.finish(now) then F.stop() return end
 
     local ball, distance = F.closest(C.Chase)
 
@@ -1349,11 +1352,10 @@ function F.control(now, dt)
 
     S.ball = ball
 
-    local manual = F.manualMove()
-    local forward = F.intent(manual)
+    local moving = F.manualMove()
+    local forward = F.intent(moving)
 
-    if distance > (C.Reach and C.ReachSize or 3.5)
-        and not manual then
+    if distance > (C.Reach and C.ReachSize or 3.5) and not moving then
         forward = F.unit(F.flat(
             F.intercept(ball) - S.root.Position
         ))
@@ -1366,18 +1368,13 @@ function F.control(now, dt)
         and F.bound(S.root.Position + direction * 5)
         or F.bound(ball.Position + direction * 1.6)
 
-    local chase = F.unit(F.flat(
-        target - S.root.Position
-    ))
+    local chase = F.unit(F.flat(target - S.root.Position))
 
-    if C.Dribble and C.Walk and not manual
+    if C.Dribble and C.Walk and not moving
         and chase.Magnitude > 0.01 then
 
         local alpha = 1 - math.exp(-12 * dt)
-
-        S.drive = F.unit(
-            S.drive * (1 - alpha) + chase * alpha
-        )
+        S.drive = F.unit(S.drive * (1 - alpha) + chase * alpha)
         S.driving = true
     else
         F.stop()
@@ -1402,17 +1399,12 @@ function F.control(now, dt)
     if F.combo(ball, direction, now, reach) then return end
 
     local velocity = F.flat(ball.AssemblyLinearVelocity)
-    local relative =
-        velocity - F.flat(S.root.AssemblyLinearVelocity)
-
+    local relative = velocity - F.flat(S.root.AssemblyLinearVelocity)
     local escaping = relative:Dot(direction) > 7
         or relative:Dot(direction) < -4
 
-    local need = distance < 2.8
-        or velocity.Magnitude < 6
-        or S.pressure < 9
-        or escaping
-        or velocity:Dot(direction) < 0
+    local need = distance < 2.8 or velocity.Magnitude < 6
+        or S.pressure < 9 or escaping or velocity:Dot(direction) < 0
 
     if not need then
         F.message("Dribble: matching ball pace")
@@ -1421,45 +1413,36 @@ function F.control(now, dt)
 
     local stride = S.pressure < 7 and 2.2 or 3.6
     local power = math.clamp(
-        0.11
-            + (stride - 2.2) * 0.025
+        0.11 + (stride - 2.2) * 0.025
             + math.min(S.ping, 0.2) * 0.07,
-        0.09,
-        0.18
+        0.09, 0.18
     )
 
-    local touchTarget = F.bound(
-        ball.Position + direction * stride
-    )
+    local touchTarget = F.bound(ball.Position + direction * stride)
 
     if C.Avoid and S.pressure < 6 and S.threat then
         local away = F.unit(F.flat(
-            S.root.Position
-                - F.enemyAt(
-                    S.threat,
-                    math.min(S.ping + 0.08, 0.35)
-                )
+            S.root.Position - F.enemyAt(
+                S.threat, math.min(S.ping + 0.08, 0.35)
+            )
         ))
 
-        local shield =
-            S.root.Position
-            + direction * 0.8
-            + away * 2.1
+        local shield = S.root.Position
+            + direction * 0.8 + away * 2.1
 
         touchTarget = F.bound(Vector3.new(
             shield.X, ball.Position.Y, shield.Z
         ))
+
         power = math.min(power, 0.12)
     end
 
-    if F.send(
-        ball, "Dribble", power, touchTarget, false
-    ) then
+    if F.send(ball, "Dribble", power, touchTarget, false) then
         F.message("Dribble: " .. S.move)
     end
 end
 
--- Original Smart Touch interface.
+-- Original Smart Touch layout.
 
 local COLORS = {
     BG = Color3.fromRGB(15, 20, 30),
@@ -1473,9 +1456,7 @@ local COLORS = {
 
 function F.new(class, props, parent)
     local item = Instance.new(class)
-    for key, value in pairs(props) do
-        item[key] = value
-    end
+    for key, value in pairs(props) do item[key] = value end
     item.Parent = parent
     return item
 end
@@ -1488,6 +1469,8 @@ end
 
 function F.toggleMoss()
     local wanted = not C.Moss
+    S.mossRequest = nil
+
     F.character()
     F.blocked()
 
@@ -1511,7 +1494,6 @@ function F.toggleDribble()
 
     C.Dribble = wanted
     F.reset()
-
     F.message(C.Dribble and "Dribble ON" or "Dribble OFF")
     F.hud()
 end
@@ -1524,26 +1506,15 @@ function F.startFinish()
     end
 
     local reason = F.blocked()
-
-    if reason then
-        F.message(reason)
-        return
-    end
+    if reason then F.message(reason) return end
 
     F.world()
 
-    local ball = F.closest(
-        C.Reach and C.ReachSize or 3.5
-    )
+    local ball = F.closest(C.Reach and C.ReachSize or 3.5)
 
     if not ball or not S.goal
-        or F.flat(
-            S.goal.Position - S.root.Position
-        ).Magnitude > 65 then
-
-        F.message(
-            "Finish: bring ball within reach near the opponent net"
-        )
+        or F.flat(S.goal.Position - S.root.Position).Magnitude > 65 then
+        F.message("Finish: bring ball within reach near the opponent net")
         return
     end
 
@@ -1561,8 +1532,7 @@ end
 function F.change(key, amount, low, high)
     C[key] = math.clamp(
         math.floor((C[key] + amount) * 10 + 0.5) / 10,
-        low,
-        high
+        low, high
     )
 
     S.nextBalls = 0
@@ -1602,11 +1572,15 @@ function F.clearInspection()
     F.hud()
 end
 
+function F.layoutY(y)
+    return y >= 92 and y + 36 or y
+end
+
 function F.showAdvanced()
     if not S.body then return end
 
     S.body.CanvasSize = UDim2.fromOffset(
-        0, S.advanced and 805 or 565
+        0, S.advanced and 841 or 601
     )
 
     for _, widget in ipairs(S.advancedWidgets) do
@@ -1641,9 +1615,7 @@ function F.mountUI()
 
     local frame = F.new("Frame", {
         Name = "Window",
-        Size = UDim2.fromOffset(
-            294, S.collapsed and 38 or 415
-        ),
+        Size = UDim2.fromOffset(294, S.collapsed and 38 or 415),
         Position = S.windowPosition
             or UDim2.new(0.5, -147, 0.40, -125),
         BackgroundColor3 = COLORS.BG,
@@ -1709,9 +1681,7 @@ function F.mountUI()
 
     headerButton("−", 229, function()
         S.collapsed = not S.collapsed
-        frame.Size = UDim2.fromOffset(
-            294, S.collapsed and 38 or 415
-        )
+        frame.Size = UDim2.fromOffset(294, S.collapsed and 38 or 415)
         S.body.Visible = not S.collapsed
     end)
 
@@ -1726,7 +1696,7 @@ function F.mountUI()
         ScrollBarThickness = 3,
         ScrollBarImageColor3 = COLORS.Edge,
         ScrollingDirection = Enum.ScrollingDirection.Y,
-        CanvasSize = UDim2.fromOffset(0, 565),
+        CanvasSize = UDim2.fromOffset(0, 601),
     }, frame)
 
     S.body = body
@@ -1734,7 +1704,7 @@ function F.mountUI()
 
     local function label(text, y, height, tint)
         return F.new("TextLabel", {
-            Position = UDim2.fromOffset(10, y),
+            Position = UDim2.fromOffset(10, F.layoutY(y)),
             Size = UDim2.fromOffset(274, height),
             BackgroundTransparency = 1,
             Text = text,
@@ -1749,7 +1719,7 @@ function F.mountUI()
     local function button(name, text, x, y, width, callback)
         local item = F.new("TextButton", {
             Name = name,
-            Position = UDim2.fromOffset(x, y),
+            Position = UDim2.fromOffset(x, F.layoutY(y)),
             Size = UDim2.fromOffset(width, 29),
             BackgroundColor3 = COLORS.Off,
             BorderSizePixel = 0,
@@ -1772,13 +1742,8 @@ function F.mountUI()
     local function flip(key)
         C[key] = not C[key]
 
-        if key == "Walk" and not C.Walk then
-            F.stop()
-        end
-
-        if key == "Air" and C.Air then
-            C.Dribble = true
-        end
+        if key == "Walk" and not C.Walk then F.stop() end
+        if key == "Air" and C.Air then C.Dribble = true end
 
         S.nextBalls = 0
         F.save()
@@ -1787,6 +1752,7 @@ function F.mountUI()
 
     local function slider(name, title, y, minimum, maximum, step)
         local caption = label(title, y, 18)
+        y = F.layoutY(y)
 
         local track = F.new("Frame", {
             Name = name .. "Track",
@@ -1827,10 +1793,7 @@ function F.mountUI()
                 0, 1
             )
 
-            caption.Text = string.format(
-                "%s  %.1f", title, C[name]
-            )
-
+            caption.Text = string.format("%s  %.1f", title, C[name])
             fill.Size = UDim2.fromScale(ratio, 1)
             knob.Position = UDim2.new(ratio, -7, 0.5, -7)
         end
@@ -1851,10 +1814,7 @@ function F.mountUI()
                 maximum
             )
 
-            if name == "MossHeight" then
-                C.Style = "CUSTOM"
-            end
-
+            if name == "MossHeight" then C.Style = "CUSTOM" end
             render()
             F.save()
         end
@@ -1896,7 +1856,7 @@ function F.mountUI()
         render()
     end
 
-    label("REACH / PREVIEW", 3, 16, COLORS.Edge)
+    label("REACH / CONTACT", 3, 16, COLORS.Edge)
 
     button("Reach", "REACH", 10, 23, 132, function()
         flip("Reach")
@@ -1914,9 +1874,23 @@ function F.mountUI()
         flip("Shield")
     end)
 
-    S.reachLabel = label(
-        "REACH 4.2 (- / =)", 98, 22, COLORS.Edge
-    )
+    button("AutoTouch", "AUTO TOUCH OFF", 10, 91, 132, function()
+        C.AutoTouch = not C.AutoTouch
+        S.contact = nil
+        F.hud()
+    end)
+
+    F.new("TextLabel", {
+        Position = UDim2.fromOffset(151, 91),
+        Size = UDim2.fromOffset(132, 29),
+        BackgroundTransparency = 1,
+        Text = "ONE TAP / CONTACT",
+        TextColor3 = COLORS.Dim,
+        Font = Enum.Font.Gotham,
+        TextSize = 10,
+    }, body)
+
+    S.reachLabel = label("REACH 4.2 (- / =)", 98, 22, COLORS.Edge)
 
     button("ReachMinus", "−", 151, 92, 60, function()
         F.change("ReachSize", -0.2, 1, 10)
@@ -1926,12 +1900,12 @@ function F.mountUI()
         F.change("ReachSize", 0.2, 1, 10)
     end)
 
-    label("MOSS • H ON / OFF", 125, 16, COLORS.Edge)
+    label("MOSS • G / H ON / OFF", 125, 16, COLORS.Edge)
 
     slider("MossRange", "BODY SPHERE RADIUS", 145, 2, 18, 0.5)
     slider("MossHeight", "SHOT HEIGHT", 196, 0, 7.5, 0.5)
 
-    button("Moss", "MOSS [H] OFF", 10, 250, 132, F.toggleMoss)
+    button("Moss", "MOSS [G] OFF", 10, 250, 132, F.toggleMoss)
 
     button("Style", "MOSS LOW", 151, 250, 132, function()
         C.Style = C.Style == "LOW" and "SMART"
@@ -1958,10 +1932,7 @@ function F.mountUI()
 
     label("DRIBBLE • YOUR MOVEMENT HAS PRIORITY", 341, 16)
 
-    button(
-        "Dribble", "DRIBBLE [F]",
-        10, 360, 132, F.toggleDribble
-    )
+    button("Dribble", "DRIBBLE [F]", 10, 360, 132, F.toggleDribble)
 
     button("Walk", "AUTO WALK", 151, 360, 132, function()
         flip("Walk")
@@ -2003,18 +1974,15 @@ function F.mountUI()
     S.statusLabel.TextWrapped = true
     S.statusLabel.TextTruncate = Enum.TextTruncate.None
 
-    table.insert(
-        S.advancedWidgets,
+    table.insert(S.advancedWidgets,
         label("INSPECT FIELD • 9 PICK / 8 CLEAR", 565, 17, COLORS.Edge)
     )
 
-    table.insert(
-        S.advancedWidgets,
+    table.insert(S.advancedWidgets,
         button("Inspect", "9 PICK PART", 10, 585, 132, F.armInspector)
     )
 
-    table.insert(
-        S.advancedWidgets,
+    table.insert(S.advancedWidgets,
         button("Clear", "8 CLEAR", 151, 585, 132, F.clearInspection)
     )
 
@@ -2023,7 +1991,7 @@ function F.mountUI()
     S.inspectPhysical = label("POS / SIZE: --", 661, 15)
 
     S.inspectPath = F.new("TextLabel", {
-        Position = UDim2.fromOffset(10, 685),
+        Position = UDim2.fromOffset(10, F.layoutY(685)),
         Size = UDim2.fromOffset(274, 95),
         BackgroundColor3 = COLORS.Top,
         BackgroundTransparency = 0.32,
@@ -2084,12 +2052,10 @@ function F.mountUI()
     end)
 
     connect(Input.InputChanged, function(input)
-        if not dragging
-            or (
-                input ~= dragging
-                and input.UserInputType
-                    ~= Enum.UserInputType.MouseMovement
-            ) then
+        if not dragging or (
+            input ~= dragging
+            and input.UserInputType ~= Enum.UserInputType.MouseMovement
+        ) then
             return
         end
 
@@ -2099,14 +2065,9 @@ function F.mountUI()
             or Vector2.new(900, 700)
 
         frame.Position = UDim2.fromOffset(
+            math.clamp(origin.X + delta.X, 0, math.max(0, view.X - 294)),
             math.clamp(
-                origin.X + delta.X,
-                0,
-                math.max(0, view.X - 294)
-            ),
-            math.clamp(
-                origin.Y + delta.Y,
-                0,
+                origin.Y + delta.Y, 0,
                 math.max(0, view.Y - frame.AbsoluteSize.Y)
             )
         )
@@ -2118,24 +2079,22 @@ function F.mountUI()
 end
 
 function F.hud()
-    if not S.alive or not S.ui or not S.ui.Parent then
-        return
-    end
+    if not S.alive or not S.ui or not S.ui.Parent then return end
 
     local function toggle(name, text, value)
         local button = S.buttons[name]
         if not button then return end
 
         button.Text = text .. (value and " ON" or " OFF")
-        button.BackgroundColor3 =
-            value and COLORS.On or COLORS.Off
+        button.BackgroundColor3 = value and COLORS.On or COLORS.Off
     end
 
     toggle("Reach", string.format("REACH %.1f", C.ReachSize), C.Reach)
     toggle("Preview", "PREVIEW", C.Preview)
     toggle("Ring", "MOSS SPHERE", C.Ring)
     toggle("Shield", "BODY SHIELD", C.Shield)
-    toggle("Moss", "MOSS [H]", C.Moss)
+    toggle("Moss", "MOSS [G]", C.Moss)
+    toggle("AutoTouch", "AUTO TOUCH", C.AutoTouch)
     toggle("Boost", "B 120 ms", C.Mode == "QUICK")
     toggle("Ultra", "U 300 ms", C.Mode == "PRECISE")
     toggle("Dribble", "DRIBBLE [" .. C.DribbleKey.Name .. "]", C.Dribble)
@@ -2168,17 +2127,15 @@ function F.hud()
             S.selectedField == S.field and S.field
             and " [PICKED]" or " [AUTO]"
         )
+        .. " → " .. (S.goal and S.goal.Name or "no net")
 
     S.statsLabel.Text =
-        C.Mode
-        .. string.format(" • %.0f ms estimate", S.ping * 2000)
-        .. " • "
-        .. (C.Walk and "AUTO WALK" or "MANUAL WALK")
+        C.Mode .. string.format(" • %.0f ms estimate", S.ping * 2000)
+        .. " • " .. (C.Walk and "AUTO WALK" or "MANUAL WALK")
 
     S.statusLabel.Text =
         (
-            S.errorUntil
-            and os.clock() < S.errorUntil
+            S.errorUntil and os.clock() < S.errorUntil
             and S.errorMessage
         )
         or (C.Moss and S.mossMessage)
@@ -2188,22 +2145,23 @@ function F.hud()
 
     if part and part.Parent then
         S.inspectName.Text = "NAME: " .. part.Name
-
         S.inspectMeta.Text =
-            "CLASS: " .. part.ClassName
-            .. " • FIELD: "
+            "CLASS: " .. part.ClassName .. " • FIELD: "
             .. (S.selectedField and S.selectedField.Name or "AUTO")
 
-        local position, size = part.Position, part.Size
+        local p, size = part.Position, part.Size
 
         S.inspectPhysical.Text = string.format(
             "POS %.1f %.1f %.1f • SIZE %.1f %.1f %.1f",
-            position.X, position.Y, position.Z,
-            size.X, size.Y, size.Z
+            p.X, p.Y, p.Z, size.X, size.Y, size.Z
         )
 
         S.inspectPath.Text = part:GetFullName()
-            .. (S.selectedGoal and " [MOSS GOAL]" or "")
+            .. (
+                S.selectedGoal == S.goal and S.goal
+                and " [TARGET NET]"
+                or (S.selectedGoal and " [INSPECTED NET]" or "")
+            )
     else
         S.inspectName.Text = "NAME: none"
         S.inspectMeta.Text = "CLASS / FIELD / GOAL: --"
@@ -2254,44 +2212,34 @@ for i = 1, 16 do
 end
 
 function F.updateRing()
-    local visible = C.Ring
-        and S.root
-        and S.humanoid
+    local visible = C.Ring and S.root and S.humanoid
         and S.humanoid.Health > 0
 
     if not visible then
-        for _, part in ipairs(S.ring) do
-            part.Transparency = 1
-        end
+        for _, part in ipairs(S.ring) do part.Transparency = 1 end
         return
     end
 
     local origin = S.root.Position - Vector3.new(
-        0,
-        S.humanoid.HipHeight + S.root.Size.Y * 0.5 - 0.1,
-        0
+        0, S.humanoid.HipHeight + S.root.Size.Y * 0.5 - 0.1, 0
     )
 
     for i, part in ipairs(S.ring) do
         local angle = (i - 0.5) * math.pi * 2 / #S.ring
 
-        local position = origin + Vector3.new(
+        local p = origin + Vector3.new(
             math.cos(angle) * C.MossRange,
             0,
             math.sin(angle) * C.MossRange
         )
 
         part.Size = Vector3.new(
-            0.08,
-            0.06,
+            0.08, 0.06,
             2 * C.MossRange * math.sin(math.pi / #S.ring) + 0.03
         )
 
         part.CFrame = CFrame.lookAt(
-            position,
-            position + Vector3.new(
-                -math.sin(angle), 0, math.cos(angle)
-            )
+            p, p + Vector3.new(-math.sin(angle), 0, math.cos(angle))
         )
 
         part.Color = S.sphere.Color3
@@ -2305,7 +2253,7 @@ F.connect(Input.InputBegan, function(input, processed)
     local key = input.KeyCode
 
     if input.UserInputType == Enum.UserInputType.Keyboard
-        and key == Enum.KeyCode.H then
+        and (key == Enum.KeyCode.G or key == Enum.KeyCode.H) then
         F.toggleMoss()
         return
     end
@@ -2322,9 +2270,7 @@ F.connect(Input.InputBegan, function(input, processed)
         if part and S.fields then
             for _, field in ipairs(S.fields:GetChildren()) do
                 if part:IsDescendantOf(field) then
-                    S.selectedField = field
-                    S.selectedGoal = nil
-
+                    S.selectedField, S.selectedGoal = field, nil
                     local home, away = F.goals(field)
 
                     for _, role in ipairs({"Home", "Away"}) do
@@ -2362,7 +2308,8 @@ F.connect(Input.InputBegan, function(input, processed)
         S.rebind = false
 
         local reserved = {
-            H = true, K = true, B = true, U = true, N = true,
+            G = true, H = true, K = true,
+            B = true, U = true, N = true,
             Five = true, KeypadFive = true,
             Nine = true, Eight = true,
             KeypadNine = true, KeypadEight = true,
@@ -2508,10 +2455,10 @@ F.connect(Run.Heartbeat, function(dt)
     local reserved = F.moss(now)
     S.mossMessage = C.Moss and S.message or nil
 
-    if not reserved and now >= S.nextControl then
-        local elapsed = S.lastControl
-            and now - S.lastControl or dt
+    F.autoTouch(now)
 
+    if not reserved and now >= S.nextControl then
+        local elapsed = S.lastControl and now - S.lastControl or dt
         F.control(now, math.clamp(elapsed, 0.002, 0.12))
         S.lastControl = now
         S.nextControl = now + 0.03
@@ -2521,20 +2468,16 @@ F.connect(Run.Heartbeat, function(dt)
         S.sphere.Adornee = S.root
         S.sphere.Radius = C.MossRange
         S.sphere.Visible = C.Ring and S.root ~= nil
-
         S.sphere.Color3 = C.Moss
             and Color3.fromRGB(70, 245, 150)
             or Color3.fromRGB(255, 166, 80)
-
         S.sphere.Transparency = C.Moss and 0.90 or 0.96
 
         F.updateRing()
 
-        S.outline.Adornee =
-            S.inspectedPart
+        S.outline.Adornee = S.inspectedPart
             and S.inspectedPart.Parent
-            and S.inspectedPart
-            or nil
+            and S.inspectedPart or nil
 
         S.preview.Adornee = S.ball
         S.preview.Radius = C.ReachSize * 0.5
@@ -2570,8 +2513,7 @@ Run:BindToRenderStep(
         end
 
         if C.Dribble and C.Walk and S.driving
-            and not S.manualDown
-            and not F.manualMove() then
+            and not S.manualDown and not F.manualMove() then
             S.humanoid:Move(S.drive, false)
         end
     end
